@@ -1,0 +1,6 @@
+# Fact-check branch — exclude agent runtime outputs
+fact-check-output.md
+agent-output/
+*.log
+*.json
+__pycache__/
