@@ -1,0 +1,5 @@
+# Runtime outputs — never commit agent outputs to knowledge-base
+*.json
+*.log
+*-output.md
+agent-output/
