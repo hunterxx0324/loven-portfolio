@@ -1,0 +1,158 @@
+name: "VD — Fact-Check Agent (Manual Trigger)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      page_type:
+        description: "Page Type"
+        required: true
+        type: choice
+        options:
+          - hub
+          - cluster
+          - school
+      assigned_pillar:
+        description: "Assigned Pillar (P1–P5)"
+        required: true
+        type: choice
+        options:
+          - P1
+          - P2
+          - P3
+          - P4
+          - P5
+      entity_concept:
+        description: "Primary Topic / Entity Concept (one specific sentence)"
+        required: true
+        type: string
+      url_slug:
+        description: "Target URL Slug (e.g., /gi-bill-hybrid-programs-california)"
+        required: true
+        type: string
+
+jobs:
+  fact-check-agent:
+    name: "Run Fact-Check Agent"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: "Checkout fact-check branch"
+        uses: actions/checkout@v4
+        with:
+          ref: fact-check
+
+      - name: "Verify master prompt file exists"
+        run: |
+          if [ ! -f "orchestration/master-prompt.md" ]; then
+            echo "ERROR: orchestration/master-prompt.md not found on fact-check branch."
+            exit 1
+          fi
+          echo "master-prompt.md confirmed present."
+
+      - name: "Call GitHub Models API and save output"
+        env:
+          GH_MODELS_TOKEN: ${{ secrets.GH_MODELS_TOKEN }}
+          PAGE_TYPE: ${{ github.event.inputs.page_type }}
+          ASSIGNED_PILLAR: ${{ github.event.inputs.assigned_pillar }}
+          ENTITY_CONCEPT: ${{ github.event.inputs.entity_concept }}
+          URL_SLUG: ${{ github.event.inputs.url_slug }}
+        run: |
+          python3 << 'PYEOF'
+          import json
+          import os
+          import urllib.request
+          import urllib.error
+
+          with open("orchestration/master-prompt.md", "r", encoding="utf-8") as f:
+              system_prompt = f.read()
+
+          page_type       = os.environ.get("PAGE_TYPE", "").strip()
+          assigned_pillar = os.environ.get("ASSIGNED_PILLAR", "").strip()
+          entity_concept  = os.environ.get("ENTITY_CONCEPT", "").strip()
+          url_slug        = os.environ.get("URL_SLUG", "").strip()
+          token           = os.environ.get("GH_MODELS_TOKEN", "").strip()
+
+          missing = []
+          if not page_type:       missing.append("page_type")
+          if not assigned_pillar: missing.append("assigned_pillar")
+          if not entity_concept:  missing.append("entity_concept")
+          if not url_slug:        missing.append("url_slug")
+
+          if missing:
+              print(f"ERROR: Missing required inputs: {', '.join(missing)}")
+              exit(1)
+
+          user_message = f"""Page Type: {page_type}
+Assigned Pillar: {assigned_pillar}
+Primary Topic / Entity Concept: {entity_concept}
+Target URL Slug: {url_slug}
+
+Generate the complete fact-check report (both Detailed Report and Markdown Table) per your system instructions. Use web search as authorized for Tier 3 claims."""
+
+          payload = {
+              "model": "gpt-4o",
+              "messages": [
+                  {"role": "system", "content": system_prompt},
+                  {"role": "user",   "content": user_message}
+              ],
+              "max_tokens": 4000,
+              "temperature": 0.2
+          }
+
+          req = urllib.request.Request(
+              "https://models.inference.ai.azure.com/chat/completions",
+              data=json.dumps(payload).encode("utf-8"),
+              headers={
+                  "Authorization": f"Bearer {token}",
+                  "Content-Type": "application/json"
+              },
+              method="POST"
+          )
+
+          try:
+              with urllib.request.urlopen(req, timeout=120) as resp:
+                  data = json.loads(resp.read())
+          except urllib.error.HTTPError as e:
+              print(f"HTTP ERROR {e.code}: {e.read().decode('utf-8', errors='replace')}")
+              exit(1)
+          except Exception as e:
+              print(f"REQUEST FAILED: {e}")
+              exit(1)
+
+          if "choices" not in data or not data["choices"]:
+              print(f"UNEXPECTED API RESPONSE: {json.dumps(data, indent=2)}")
+              exit(1)
+
+          fc_output = data["choices"][0]["message"]["content"]
+          header = f"""---
+# Fact-Check Agent Output
+**Run:** ${{ github.run_number }}
+**Branch:** fact-check
+**Page Type:** {page_type}
+**Assigned Pillar:** {assigned_pillar}
+**Entity Concept:** {entity_concept}
+**URL Slug:** {url_slug}
+---
+
+"""
+          final_output = header + fc_output
+
+          with open("fact-check-output.md", "w", encoding="utf-8") as f:
+              f.write(final_output)
+
+          print(f"Output saved. Character count: {len(final_output)}")
+
+          PYEOF
+
+      - name: "Upload fact-check output as artifact"
+        uses: actions/upload-artifact@v4
+        with:
+          name: "fact-check-output-run-${{ github.run_number }}"
+          path: fact-check-output.md
+          retention-days: 30
+
+      - name: "Print output to workflow log"
+        run: |
+          echo "========== FACT-CHECK AGENT OUTPUT =========="
+          cat fact-check-output.md
+          echo "========== END OF OUTPUT =========="
