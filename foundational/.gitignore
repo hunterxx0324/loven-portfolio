@@ -1,0 +1,4 @@
+# quality-check branch — reserved, not operational
+*.log
+*.json
+__pycache__/
