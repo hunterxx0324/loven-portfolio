@@ -40,8 +40,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: outline
-          # If outline branch does not exist, fall back to creating it from default
-          # (remove if you want to fail explicitly)
           fetch-depth: 1
 
       - name: "Create outline branch if missing"
@@ -68,14 +66,16 @@ jobs:
           ASSIGNED_PILLAR: ${{ github.event.inputs.assigned_pillar }}
           ENTITY_CONCEPT: ${{ github.event.inputs.entity_concept }}
           URL_SLUG: ${{ github.event.inputs.url_slug }}
+          # GitHub-provided env vars for run metadata
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+          GITHUB_ACTOR: ${{ github.actor }}
         run: |
-          # Ensure Python has requests (for better error handling)
           pip install requests --quiet 2>/dev/null || true
 
           python3 << 'PYEOF'
           import json, os, sys, textwrap
 
-          # ---- 1. Validate token early ----
+          # ---- 1. Validate token ----
           token = os.environ.get("GH_MODELS_TOKEN", "").strip()
           if not token:
               print("ERROR: GH_MODELS_TOKEN secret is missing or empty", file=sys.stderr)
@@ -100,6 +100,10 @@ jobs:
           if missing:
               print(f"ERROR: Missing required inputs: {', '.join(missing)}", file=sys.stderr)
               sys.exit(1)
+
+          # GitHub metadata from environment (no ${{ }} in Python)
+          run_number = os.environ.get("GITHUB_RUN_NUMBER", "unknown")
+          actor = os.environ.get("GITHUB_ACTOR", "unknown")
 
           user_message = textwrap.dedent(f"""\
               Page Type: {page_type}
@@ -127,7 +131,7 @@ jobs:
               "Content-Type": "application/json"
           }
 
-          # ---- 5. Try to use requests (more robust) ----
+          # ---- 5. Call API (prefer requests) ----
           try:
               import requests
               resp = requests.post(api_url, headers=headers, json=payload, timeout=120)
@@ -136,13 +140,11 @@ jobs:
                   sys.exit(1)
               data = resp.json()
           except ImportError:
-              # Fallback to urllib
               import urllib.request, urllib.error
               req = urllib.request.Request(api_url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
               try:
                   with urllib.request.urlopen(req, timeout=120) as resp:
-                      raw = resp.read()
-                      data = json.loads(raw)
+                      data = json.loads(resp.read().decode("utf-8"))
               except urllib.error.HTTPError as e:
                   error_body = e.read().decode("utf-8", errors="replace")
                   print(f"HTTP ERROR {e.code}: {error_body}", file=sys.stderr)
@@ -154,19 +156,19 @@ jobs:
               print(f"Request error: {e}", file=sys.stderr)
               sys.exit(1)
 
-          # ---- 6. Extract and validate response ----
+          # ---- 6. Extract content ----
           if "choices" not in data or not data["choices"]:
               print(f"UNEXPECTED API RESPONSE: {json.dumps(data, indent=2)}", file=sys.stderr)
               sys.exit(1)
 
           content = data["choices"][0]["message"]["content"]
 
-          # ---- 7. Write output with metadata ----
+          # ---- 7. Write output with metadata (no ${{ }} syntax) ----
           header = f"""---
 # Outline Agent Output
-**Run:** ${{ github.run_number }}
+**Run:** {run_number}
 **Branch:** outline
-**Triggered by:** ${{ github.actor }}
+**Triggered by:** {actor}
 **Page Type:** {page_type}
 **Assigned Pillar:** {assigned_pillar}
 **Entity Concept:** {entity_concept}
