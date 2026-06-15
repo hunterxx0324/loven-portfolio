@@ -1,0 +1,6 @@
+# Outline branch — exclude agent runtime outputs from source control
+agent-output/
+outline-output.md
+*.log
+*.json
+__pycache__/
