@@ -1,4 +1,4 @@
-name: "VD - Outline Agent (Manual Trigger)"
+name: "VD — Outline Agent (Manual Trigger)"
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ on:
           - cluster
           - school
       assigned_pillar:
-        description: "Assigned Pillar (P1-P5)"
+        description: "Assigned Pillar (P1–P5)"
         required: true
         type: choice
         options:
@@ -40,6 +40,18 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: outline
+          # If outline branch does not exist, fall back to creating it from default
+          # (remove if you want to fail explicitly)
+          fetch-depth: 1
+
+      - name: "Create outline branch if missing"
+        run: |
+          if ! git show-ref --verify --quiet refs/heads/outline; then
+            echo "Outline branch not found – creating from current branch"
+            git checkout -b outline
+            git push origin outline
+          fi
+          git checkout outline
 
       - name: "Verify master prompt file exists"
         run: |
@@ -47,8 +59,7 @@ jobs:
             echo "ERROR: orchestration/master-prompt.md not found on outline branch."
             exit 1
           fi
-          echo "master-prompt.md confirmed present."
-          wc -c orchestration/master-prompt.md
+          echo "master-prompt.md confirmed present (size: $(wc -c < orchestration/master-prompt.md) bytes)"
 
       - name: "Call GitHub Models API and save output"
         env:
@@ -58,41 +69,48 @@ jobs:
           ENTITY_CONCEPT: ${{ github.event.inputs.entity_concept }}
           URL_SLUG: ${{ github.event.inputs.url_slug }}
         run: |
+          # Ensure Python has requests (for better error handling)
+          pip install requests --quiet 2>/dev/null || true
+
           python3 << 'PYEOF'
-          import json
-          import os
-          import urllib.request
-          import urllib.error
+          import json, os, sys, textwrap
 
-          # Read system prompt from branch file
-          with open("orchestration/master-prompt.md", "r", encoding="utf-8") as f:
-              system_prompt = f.read()
+          # ---- 1. Validate token early ----
+          token = os.environ.get("GH_MODELS_TOKEN", "").strip()
+          if not token:
+              print("ERROR: GH_MODELS_TOKEN secret is missing or empty", file=sys.stderr)
+              sys.exit(1)
 
-          # Build inputs from environment variables
+          # ---- 2. Read system prompt ----
+          try:
+              with open("orchestration/master-prompt.md", "r", encoding="utf-8") as f:
+                  system_prompt = f.read()
+          except FileNotFoundError:
+              print("ERROR: orchestration/master-prompt.md not readable", file=sys.stderr)
+              sys.exit(1)
+
+          # ---- 3. Gather inputs ----
           page_type      = os.environ.get("PAGE_TYPE", "").strip()
           assigned_pillar = os.environ.get("ASSIGNED_PILLAR", "").strip()
           entity_concept  = os.environ.get("ENTITY_CONCEPT", "").strip()
           url_slug        = os.environ.get("URL_SLUG", "").strip()
-          token           = os.environ.get("GH_MODELS_TOKEN", "").strip()
 
-          # Validate all four required inputs
-          missing = []
-          if not page_type:      missing.append("page_type")
-          if not assigned_pillar: missing.append("assigned_pillar")
-          if not entity_concept:  missing.append("entity_concept")
-          if not url_slug:        missing.append("url_slug")
-
+          missing = [k for k, v in [("page_type", page_type), ("assigned_pillar", assigned_pillar),
+                                     ("entity_concept", entity_concept), ("url_slug", url_slug)] if not v]
           if missing:
-              print(f"ERROR: Missing required inputs: {', '.join(missing)}")
-              exit(1)
+              print(f"ERROR: Missing required inputs: {', '.join(missing)}", file=sys.stderr)
+              sys.exit(1)
 
-          user_message = f"""Page Type: {page_type}
-          Assigned Pillar: {assigned_pillar}
-          Primary Topic / Entity Concept: {entity_concept}
-          Target URL Slug: {url_slug}
+          user_message = textwrap.dedent(f"""\
+              Page Type: {page_type}
+              Assigned Pillar: {assigned_pillar}
+              Primary Topic / Entity Concept: {entity_concept}
+              Target URL Slug: {url_slug}
 
-          Generate all 14 required deliverables per your system instructions."""
+              Generate all 14 required deliverables per your system instructions.
+          """)
 
+          # ---- 4. Prepare API request ----
           payload = {
               "model": "gpt-4o",
               "messages": [
@@ -103,57 +121,65 @@ jobs:
               "temperature": 0.3
           }
 
-          api_url = "https://azure.com"
-          req = urllib.request.Request(
-              api_url,
-              data=json.dumps(payload).encode("utf-8"),
-              headers={
-                  "Authorization": f"Bearer {token}",
-                  "Content-Type": "application/json"
-              },
-              method="POST"
-          )
+          api_url = "https://models.inference.ai.azure.com/chat/completions?api-version=2024-04-01-preview"
+          headers = {
+              "Authorization": f"Bearer {token}",
+              "Content-Type": "application/json"
+          }
 
+          # ---- 5. Try to use requests (more robust) ----
           try:
-              with urllib.request.urlopen(req, timeout=120) as resp:
-                  raw = resp.read()
-                  data = json.loads(raw)
-          except urllib.error.HTTPError as e:
-              error_body = e.read().decode("utf-8", errors="replace")
-              print(f"HTTP ERROR {e.code}: {error_body}")
-              exit(1)
+              import requests
+              resp = requests.post(api_url, headers=headers, json=payload, timeout=120)
+              if resp.status_code != 200:
+                  print(f"HTTP {resp.status_code}: {resp.text}", file=sys.stderr)
+                  sys.exit(1)
+              data = resp.json()
+          except ImportError:
+              # Fallback to urllib
+              import urllib.request, urllib.error
+              req = urllib.request.Request(api_url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+              try:
+                  with urllib.request.urlopen(req, timeout=120) as resp:
+                      raw = resp.read()
+                      data = json.loads(raw)
+              except urllib.error.HTTPError as e:
+                  error_body = e.read().decode("utf-8", errors="replace")
+                  print(f"HTTP ERROR {e.code}: {error_body}", file=sys.stderr)
+                  sys.exit(1)
+              except Exception as e:
+                  print(f"REQUEST FAILED: {e}", file=sys.stderr)
+                  sys.exit(1)
           except Exception as e:
-              print(f"REQUEST FAILED: {e}")
-              exit(1)
+              print(f"Request error: {e}", file=sys.stderr)
+              sys.exit(1)
 
+          # ---- 6. Extract and validate response ----
           if "choices" not in data or not data["choices"]:
-              print(f"UNEXPECTED API RESPONSE: {json.dumps(data, indent=2)}")
-              exit(1)
+              print(f"UNEXPECTED API RESPONSE: {json.dumps(data, indent=2)}", file=sys.stderr)
+              sys.exit(1)
 
           content = data["choices"][0]["message"]["content"]
 
-          # Add run metadata header to output
+          # ---- 7. Write output with metadata ----
           header = f"""---
-          # Outline Agent Output
-          **Run:** ${{ github.run_number }}
-          **Branch:** outline
-          **Triggered by:** ${{ github.actor }}
-          **Page Type:** {page_type}
-          **Assigned Pillar:** {assigned_pillar}
-          **Entity Concept:** {entity_concept}
-          **URL Slug:** {url_slug}
-          ---
+# Outline Agent Output
+**Run:** ${{ github.run_number }}
+**Branch:** outline
+**Triggered by:** ${{ github.actor }}
+**Page Type:** {page_type}
+**Assigned Pillar:** {assigned_pillar}
+**Entity Concept:** {entity_concept}
+**URL Slug:** {url_slug}
+---
 
-          """
+"""
           final_output = header + content
-
           with open("outline-output.md", "w", encoding="utf-8") as f:
               f.write(final_output)
 
-          print(f"Output saved. Character count: {len(final_output)}")
-          print("First 300 characters of output:")
-          print(final_output[:300])
-
+          print(f"Success: {len(final_output)} characters written to outline-output.md")
+          sys.exit(0)
           PYEOF
 
       - name: "Upload outline output as artifact"
