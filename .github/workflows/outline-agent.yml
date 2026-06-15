@@ -1,4 +1,4 @@
-name: "VD - Outline Agent (Manual Trigger)"
+name: "VD — Outline Agent (Manual Trigger)"
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ on:
           - cluster
           - school
       assigned_pillar:
-        description: "Assigned Pillar (P1-P5)"
+        description: "Assigned Pillar (P1–P5)"
         required: true
         type: choice
         options:
@@ -52,7 +52,7 @@ jobs:
 
       - name: "Call GitHub Models API and save output"
         env:
-          GH_MODELS_TOKEN: ${{ secrets.GH_MODELS_TOKEN }}
+          LOVEN_MODELS_TOKEN: ${{ secrets.LOVEN_MODELS_TOKEN }}
           PAGE_TYPE: ${{ github.event.inputs.page_type }}
           ASSIGNED_PILLAR: ${{ github.event.inputs.assigned_pillar }}
           ENTITY_CONCEPT: ${{ github.event.inputs.entity_concept }}
@@ -73,7 +73,7 @@ jobs:
           assigned_pillar = os.environ.get("ASSIGNED_PILLAR", "").strip()
           entity_concept  = os.environ.get("ENTITY_CONCEPT", "").strip()
           url_slug        = os.environ.get("URL_SLUG", "").strip()
-          token           = os.environ.get("GH_MODELS_TOKEN", "").strip()
+          token           = os.environ.get("LOVEN_MODELS_TOKEN", "").strip()
 
           # Validate all four required inputs
           missing = []
