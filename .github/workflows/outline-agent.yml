@@ -12,7 +12,7 @@ on:
           - cluster
           - school
       assigned_pillar:
-        description: "Assigned Pillar (P1–P5)"
+        description: "Assigned Pillar (P1-P5)"
         required: true
         type: choice
         options:
