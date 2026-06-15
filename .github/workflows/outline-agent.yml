@@ -66,22 +66,42 @@ jobs:
           ASSIGNED_PILLAR: ${{ github.event.inputs.assigned_pillar }}
           ENTITY_CONCEPT: ${{ github.event.inputs.entity_concept }}
           URL_SLUG: ${{ github.event.inputs.url_slug }}
-          # GitHub-provided env vars for run metadata
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
           GITHUB_ACTOR: ${{ github.actor }}
         run: |
-          pip install requests --quiet 2>/dev/null || true
+          # ---- Write header using shell (no YAML conflicts) ----
+          cat > outline-output.md << 'EOF'
+          ---
+          # Outline Agent Output
+          **Run:** 
+          **Branch:** outline
+          **Triggered by:** 
+          **Page Type:** 
+          **Assigned Pillar:** 
+          **Entity Concept:** 
+          **URL Slug:** 
+          ---
+          
+          EOF
+          
+          # Replace placeholders with actual values (avoid any ${{ }} in YAML)
+          sed -i "s|**Run:** |**Run:** $GITHUB_RUN_NUMBER|" outline-output.md
+          sed -i "s|**Triggered by:** |**Triggered by:** $GITHUB_ACTOR|" outline-output.md
+          sed -i "s|**Page Type:** |**Page Type:** $PAGE_TYPE|" outline-output.md
+          sed -i "s|**Assigned Pillar:** |**Assigned Pillar:** $ASSIGNED_PILLAR|" outline-output.md
+          sed -i "s|**Entity Concept:** |**Entity Concept:** $ENTITY_CONCEPT|" outline-output.md
+          sed -i "s|**URL Slug:** |**URL Slug:** $URL_SLUG|" outline-output.md
 
+          # ---- Python script for API call (no braces in YAML) ----
+          pip install requests --quiet 2>/dev/null || true
           python3 << 'PYEOF'
           import json, os, sys, textwrap
 
-          # ---- 1. Validate token ----
           token = os.environ.get("GH_MODELS_TOKEN", "").strip()
           if not token:
-              print("ERROR: GH_MODELS_TOKEN secret is missing or empty", file=sys.stderr)
+              print("ERROR: GH_MODELS_TOKEN missing", file=sys.stderr)
               sys.exit(1)
 
-          # ---- 2. Read system prompt ----
           try:
               with open("orchestration/master-prompt.md", "r", encoding="utf-8") as f:
                   system_prompt = f.read()
@@ -89,21 +109,16 @@ jobs:
               print("ERROR: orchestration/master-prompt.md not readable", file=sys.stderr)
               sys.exit(1)
 
-          # ---- 3. Gather inputs ----
-          page_type      = os.environ.get("PAGE_TYPE", "").strip()
+          page_type = os.environ.get("PAGE_TYPE", "").strip()
           assigned_pillar = os.environ.get("ASSIGNED_PILLAR", "").strip()
-          entity_concept  = os.environ.get("ENTITY_CONCEPT", "").strip()
-          url_slug        = os.environ.get("URL_SLUG", "").strip()
+          entity_concept = os.environ.get("ENTITY_CONCEPT", "").strip()
+          url_slug = os.environ.get("URL_SLUG", "").strip()
 
           missing = [k for k, v in [("page_type", page_type), ("assigned_pillar", assigned_pillar),
                                      ("entity_concept", entity_concept), ("url_slug", url_slug)] if not v]
           if missing:
-              print(f"ERROR: Missing required inputs: {', '.join(missing)}", file=sys.stderr)
+              print(f"ERROR: Missing inputs: {', '.join(missing)}", file=sys.stderr)
               sys.exit(1)
-
-          # GitHub metadata from environment (no ${{ }} in Python)
-          run_number = os.environ.get("GITHUB_RUN_NUMBER", "unknown")
-          actor = os.environ.get("GITHUB_ACTOR", "unknown")
 
           user_message = textwrap.dedent(f"""\
               Page Type: {page_type}
@@ -114,7 +129,6 @@ jobs:
               Generate all 14 required deliverables per your system instructions.
           """)
 
-          # ---- 4. Prepare API request ----
           payload = {
               "model": "gpt-4o",
               "messages": [
@@ -131,7 +145,6 @@ jobs:
               "Content-Type": "application/json"
           }
 
-          # ---- 5. Call API (prefer requests) ----
           try:
               import requests
               resp = requests.post(api_url, headers=headers, json=payload, timeout=120)
@@ -149,38 +162,18 @@ jobs:
                   error_body = e.read().decode("utf-8", errors="replace")
                   print(f"HTTP ERROR {e.code}: {error_body}", file=sys.stderr)
                   sys.exit(1)
-              except Exception as e:
-                  print(f"REQUEST FAILED: {e}", file=sys.stderr)
-                  sys.exit(1)
-          except Exception as e:
-              print(f"Request error: {e}", file=sys.stderr)
-              sys.exit(1)
 
-          # ---- 6. Extract content ----
           if "choices" not in data or not data["choices"]:
               print(f"UNEXPECTED API RESPONSE: {json.dumps(data, indent=2)}", file=sys.stderr)
               sys.exit(1)
 
           content = data["choices"][0]["message"]["content"]
 
-          # ---- 7. Write output with metadata (no ${{ }} syntax) ----
-          header = f"""---
-# Outline Agent Output
-**Run:** {run_number}
-**Branch:** outline
-**Triggered by:** {actor}
-**Page Type:** {page_type}
-**Assigned Pillar:** {assigned_pillar}
-**Entity Concept:** {entity_concept}
-**URL Slug:** {url_slug}
----
+          # Append model output to the existing file (header already there)
+          with open("outline-output.md", "a", encoding="utf-8") as f:
+              f.write(content)
 
-"""
-          final_output = header + content
-          with open("outline-output.md", "w", encoding="utf-8") as f:
-              f.write(final_output)
-
-          print(f"Success: {len(final_output)} characters written to outline-output.md")
+          print(f"Success: output appended to outline-output.md")
           sys.exit(0)
           PYEOF
 
