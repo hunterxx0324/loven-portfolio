@@ -1,4 +1,4 @@
-name: "VD — Outline Agent (Manual Trigger)"
+name: "VD - Outline Agent (Manual Trigger)"
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ on:
           - cluster
           - school
       assigned_pillar:
-        description: "Assigned Pillar (P1–P5)"
+        description: "Assigned Pillar (P1-P5)"
         required: true
         type: choice
         options:
@@ -50,7 +50,7 @@ jobs:
           echo "master-prompt.md confirmed present."
           wc -c orchestration/master-prompt.md
 
-            - name: "Call GitHub Models API and save output"
+      - name: "Call GitHub Models API and save output"
         env:
           GH_MODELS_TOKEN: ${{ secrets.GH_MODELS_TOKEN }}
           PAGE_TYPE: ${{ github.event.inputs.page_type }}
@@ -68,13 +68,12 @@ jobs:
           with open("orchestration/master-prompt.md", "r", encoding="utf-8") as f:
               system_prompt = f.read()
 
-
           # Build inputs from environment variables
           page_type      = os.environ.get("PAGE_TYPE", "").strip()
           assigned_pillar = os.environ.get("ASSIGNED_PILLAR", "").strip()
           entity_concept  = os.environ.get("ENTITY_CONCEPT", "").strip()
           url_slug        = os.environ.get("URL_SLUG", "").strip()
-          token           = os.environ.get("LOVEN_MODELS_TOKEN", "").strip()
+          token           = os.environ.get("GH_MODELS_TOKEN", "").strip()
 
           # Validate all four required inputs
           missing = []
@@ -88,11 +87,11 @@ jobs:
               exit(1)
 
           user_message = f"""Page Type: {page_type}
-Assigned Pillar: {assigned_pillar}
-Primary Topic / Entity Concept: {entity_concept}
-Target URL Slug: {url_slug}
+          Assigned Pillar: {assigned_pillar}
+          Primary Topic / Entity Concept: {entity_concept}
+          Target URL Slug: {url_slug}
 
-Generate all 14 required deliverables per your system instructions."""
+          Generate all 14 required deliverables per your system instructions."""
 
           payload = {
               "model": "gpt-4o",
@@ -104,7 +103,7 @@ Generate all 14 required deliverables per your system instructions."""
               "temperature": 0.3
           }
 
-          api_url = "https://models.inference.ai.azure.com/chat/completions"
+          api_url = "https://azure.com"
           req = urllib.request.Request(
               api_url,
               data=json.dumps(payload).encode("utf-8"),
@@ -135,17 +134,17 @@ Generate all 14 required deliverables per your system instructions."""
 
           # Add run metadata header to output
           header = f"""---
-# Outline Agent Output
-**Run:** ${{ github.run_number }}
-**Branch:** outline
-**Triggered by:** ${{ github.actor }}
-**Page Type:** {page_type}
-**Assigned Pillar:** {assigned_pillar}
-**Entity Concept:** {entity_concept}
-**URL Slug:** {url_slug}
----
+          # Outline Agent Output
+          **Run:** ${{ github.run_number }}
+          **Branch:** outline
+          **Triggered by:** ${{ github.actor }}
+          **Page Type:** {page_type}
+          **Assigned Pillar:** {assigned_pillar}
+          **Entity Concept:** {entity_concept}
+          **URL Slug:** {url_slug}
+          ---
 
-"""
+          """
           final_output = header + content
 
           with open("outline-output.md", "w", encoding="utf-8") as f:
