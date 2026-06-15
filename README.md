@@ -1,1 +1,1 @@
-Follow Instructions in vd-github-deployment-sop-v1.0.0
+Follow Instructions in .github/workflows/outline-agent.yml
