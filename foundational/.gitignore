@@ -1,0 +1,7 @@
+# Content branch — exclude agent runtime outputs
+agent-output/
+content-output.md
+draft-output.md
+*.log
+*.json
+__pycache__/
