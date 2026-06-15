@@ -50,9 +50,9 @@ jobs:
           echo "master-prompt.md confirmed present."
           wc -c orchestration/master-prompt.md
 
-      - name: "Call GitHub Models API and save output"
+            - name: "Call GitHub Models API and save output"
         env:
-          LOVEN_MODELS_TOKEN: ${{ secrets.LOVEN_MODELS_TOKEN }}
+          GH_MODELS_TOKEN: ${{ secrets.GH_MODELS_TOKEN }}
           PAGE_TYPE: ${{ github.event.inputs.page_type }}
           ASSIGNED_PILLAR: ${{ github.event.inputs.assigned_pillar }}
           ENTITY_CONCEPT: ${{ github.event.inputs.entity_concept }}
@@ -67,6 +67,7 @@ jobs:
           # Read system prompt from branch file
           with open("orchestration/master-prompt.md", "r", encoding="utf-8") as f:
               system_prompt = f.read()
+
 
           # Build inputs from environment variables
           page_type      = os.environ.get("PAGE_TYPE", "").strip()
