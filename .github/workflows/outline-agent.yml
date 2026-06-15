@@ -57,10 +57,8 @@ jobs:
           ASSIGNED_PILLAR: ${{ github.event.inputs.assigned_pillar }}
           ENTITY_CONCEPT: ${{ github.event.inputs.entity_concept }}
           URL_SLUG: ${{ github.event.inputs.url_slug }}
-          GH_RUN_NUMBER: ${{ github.run_number }}
-          GH_ACTOR: ${{ github.actor }}
         run: |
-          python3 -c '
+          python3 << 'PYEOF'
           import json
           import os
           import urllib.request
@@ -71,13 +69,11 @@ jobs:
               system_prompt = f.read()
 
           # Build inputs from environment variables
-          page_type       = os.environ.get("PAGE_TYPE", "").strip()
+          page_type      = os.environ.get("PAGE_TYPE", "").strip()
           assigned_pillar = os.environ.get("ASSIGNED_PILLAR", "").strip()
           entity_concept  = os.environ.get("ENTITY_CONCEPT", "").strip()
           url_slug        = os.environ.get("URL_SLUG", "").strip()
           token           = os.environ.get("GH_MODELS_TOKEN", "").strip()
-          run_number      = os.environ.get("GH_RUN_NUMBER", "").strip()
-          actor           = os.environ.get("GH_ACTOR", "").strip()
 
           # Validate all four required inputs
           missing = []
@@ -87,10 +83,15 @@ jobs:
           if not url_slug:        missing.append("url_slug")
 
           if missing:
-              print(f"ERROR: Missing required inputs: {\", \".join(missing)}")
+              print(f"ERROR: Missing required inputs: {', '.join(missing)}")
               exit(1)
 
-          user_message = f"Page Type: {page_type}\nAssigned Pillar: {assigned_pillar}\nPrimary Topic / Entity Concept: {entity_concept}\nTarget URL Slug: {url_slug}\n\nGenerate all 14 required deliverables per your system instructions."
+          user_message = f"""Page Type: {page_type}
+Assigned Pillar: {assigned_pillar}
+Primary Topic / Entity Concept: {entity_concept}
+Target URL Slug: {url_slug}
+
+Generate all 14 required deliverables per your system instructions."""
 
           payload = {
               "model": "gpt-4o",
@@ -132,7 +133,18 @@ jobs:
           content = data["choices"][0]["message"]["content"]
 
           # Add run metadata header to output
-          header = f"---\n# Outline Agent Output\n**Run:** {run_number}\n**Branch:** outline\n**Triggered by:** {actor}\n**Page Type:** {page_type}\n**Assigned Pillar:** {assigned_pillar}\n**Entity Concept:** {entity_concept}\n**URL Slug:** {url_slug}\n---\n\n"
+          header = f"""---
+# Outline Agent Output
+**Run:** ${{ github.run_number }}
+**Branch:** outline
+**Triggered by:** ${{ github.actor }}
+**Page Type:** {page_type}
+**Assigned Pillar:** {assigned_pillar}
+**Entity Concept:** {entity_concept}
+**URL Slug:** {url_slug}
+---
+
+"""
           final_output = header + content
 
           with open("outline-output.md", "w", encoding="utf-8") as f:
@@ -141,7 +153,8 @@ jobs:
           print(f"Output saved. Character count: {len(final_output)}")
           print("First 300 characters of output:")
           print(final_output[:300])
-          '
+
+          PYEOF
 
       - name: "Upload outline output as artifact"
         uses: actions/upload-artifact@v4
