@@ -31,3 +31,127 @@ on:
         type: string
 
 jobs:
+  outline-agent:
+    name: "Run Outline Agent"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: "Checkout outline branch"
+        uses: actions/checkout@v4
+        with:
+          ref: outline
+
+      - name: "Verify master prompt file exists"
+        run: |
+          if [ ! -f "orchestration/master-prompt.md" ]; then
+            echo "ERROR: orchestration/master-prompt.md not found on outline branch."
+            exit 1
+          fi
+          echo "master-prompt.md confirmed present."
+          wc -c orchestration/master-prompt.md
+
+      - name: "Call GitHub Models API and save output"
+        env:
+          GH_MODELS_TOKEN: ${{ secrets.GH_MODELS_TOKEN }}
+          PAGE_TYPE: ${{ github.event.inputs.page_type }}
+          ASSIGNED_PILLAR: ${{ github.event.inputs.assigned_pillar }}
+          ENTITY_CONCEPT: ${{ github.event.inputs.entity_concept }}
+          URL_SLUG: ${{ github.event.inputs.url_slug }}
+          GH_RUN_NUMBER: ${{ github.run_number }}
+          GH_ACTOR: ${{ github.actor }}
+        run: |
+          python3 -c '
+          import json
+          import os
+          import urllib.request
+          import urllib.error
+
+          # Read system prompt from branch file
+          with open("orchestration/master-prompt.md", "r", encoding="utf-8") as f:
+              system_prompt = f.read()
+
+          # Build inputs from environment variables
+          page_type       = os.environ.get("PAGE_TYPE", "").strip()
+          assigned_pillar = os.environ.get("ASSIGNED_PILLAR", "").strip()
+          entity_concept  = os.environ.get("ENTITY_CONCEPT", "").strip()
+          url_slug        = os.environ.get("URL_SLUG", "").strip()
+          token           = os.environ.get("GH_MODELS_TOKEN", "").strip()
+          run_number      = os.environ.get("GH_RUN_NUMBER", "").strip()
+          actor           = os.environ.get("GH_ACTOR", "").strip()
+
+          # Validate all four required inputs
+          missing = []
+          if not page_type:      missing.append("page_type")
+          if not assigned_pillar: missing.append("assigned_pillar")
+          if not entity_concept:  missing.append("entity_concept")
+          if not url_slug:        missing.append("url_slug")
+
+          if missing:
+              print(f"ERROR: Missing required inputs: {\", \".join(missing)}")
+              exit(1)
+
+          user_message = f"Page Type: {page_type}\nAssigned Pillar: {assigned_pillar}\nPrimary Topic / Entity Concept: {entity_concept}\nTarget URL Slug: {url_slug}\n\nGenerate all 14 required deliverables per your system instructions."
+
+          payload = {
+              "model": "gpt-4o",
+              "messages": [
+                  {"role": "system", "content": system_prompt},
+                  {"role": "user",   "content": user_message}
+              ],
+              "max_tokens": 4000,
+              "temperature": 0.3
+          }
+
+          api_url = "https://models.inference.ai.azure.com/chat/completions"
+          req = urllib.request.Request(
+              api_url,
+              data=json.dumps(payload).encode("utf-8"),
+              headers={
+                  "Authorization": f"Bearer {token}",
+                  "Content-Type": "application/json"
+              },
+              method="POST"
+          )
+
+          try:
+              with urllib.request.urlopen(req, timeout=120) as resp:
+                  raw = resp.read()
+                  data = json.loads(raw)
+          except urllib.error.HTTPError as e:
+              error_body = e.read().decode("utf-8", errors="replace")
+              print(f"HTTP ERROR {e.code}: {error_body}")
+              exit(1)
+          except Exception as e:
+              print(f"REQUEST FAILED: {e}")
+              exit(1)
+
+          if "choices" not in data or not data["choices"]:
+              print(f"UNEXPECTED API RESPONSE: {json.dumps(data, indent=2)}")
+              exit(1)
+
+          content = data["choices"][0]["message"]["content"]
+
+          # Add run metadata header to output
+          header = f"---\n# Outline Agent Output\n**Run:** {run_number}\n**Branch:** outline\n**Triggered by:** {actor}\n**Page Type:** {page_type}\n**Assigned Pillar:** {assigned_pillar}\n**Entity Concept:** {entity_concept}\n**URL Slug:** {url_slug}\n---\n\n"
+          final_output = header + content
+
+          with open("outline-output.md", "w", encoding="utf-8") as f:
+              f.write(final_output)
+
+          print(f"Output saved. Character count: {len(final_output)}")
+          print("First 300 characters of output:")
+          print(final_output[:300])
+          '
+
+      - name: "Upload outline output as artifact"
+        uses: actions/upload-artifact@v4
+        with:
+          name: "outline-output-run-${{ github.run_number }}"
+          path: outline-output.md
+          retention-days: 30
+
+      - name: "Print output to workflow log"
+        run: |
+          echo "========== OUTLINE AGENT OUTPUT =========="
+          cat outline-output.md
+          echo "========== END OF OUTPUT =========="
